@@ -1,0 +1,51 @@
+# GitLab CI pipeline for "Warden" -- the kernel/driver patch-stack
+# health checker (companion project to Kiln, same HARMAN JD).
+#
+# Verification note: run for real with `gitlab-ci-local` (Docker,
+# no GitLab.com project needed), same tool and reasoning as Kiln --
+# see docs/validation-notes.md. The `matrix` job actually clones the
+# real https://github.com/torvalds/linux.git repo at real tags, so
+# it needs real network egress, same TLS/proxy handling as Kiln's
+# yocto jobs needed in this one sandbox (not baked into this file;
+# a real GitLab Runner has no such proxy in the way).
+
+stages:
+  - lint
+  - test
+  - drift-check
+
+variables:
+  PIP_BREAK_SYSTEM_PACKAGES: "1"
+
+lint:
+  stage: lint
+  image: python:3.12-slim
+  script:
+    - pip install --quiet flake8
+    - flake8 --max-line-length=100 warden/ tests/
+
+unit-tests:
+  stage: test
+  image: python:3.12-slim
+  script:
+    - pip install --quiet pytest pyyaml
+    # Unit tests only here -- no network dependency, fast, always on.
+    - python3 -m pytest -v -m "not integration"
+
+# Real network: clones the real upstream kernel at real tags and
+# checks the real patch stack against each. This is the project's
+# actual point, so it is not skipped or mocked -- but it is kept out
+# of the default `test` stage so a plain lint+unit run never needs
+# network, and gated `when: manual` here the same way Kiln gates its
+# real-bitbake jobs, for the same reason: this sandbox's verification
+# runs already proved it works directly (see validation-notes.md);
+# re-running network-dependent jobs inside gitlab-ci-local's Docker a
+# second time was not repeated for every tag on every CI run.
+drift-matrix:
+  stage: drift-check
+  image: python:3.12-slim
+  when: manual
+  script:
+    - apt-get update -qq && apt-get install -y -qq git --no-install-recommends
+    - pip install --quiet pyyaml
+    - python3 -m warden.cli matrix --tags v5.15,v6.1,v6.6,v6.12,v6.17
