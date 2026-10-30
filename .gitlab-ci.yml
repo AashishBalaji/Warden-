@@ -1,13 +1,17 @@
 # GitLab CI pipeline for "Warden" -- the kernel/driver patch-stack
 # health checker (companion project to Kiln, same HARMAN JD).
 #
-# Verification note: run for real with `gitlab-ci-local` (Docker,
-# no GitLab.com project needed), same tool and reasoning as Kiln --
-# see docs/validation-notes.md. The `matrix` job actually clones the
-# real https://github.com/torvalds/linux.git repo at real tags, so
-# it needs real network egress, same TLS/proxy handling as Kiln's
-# yocto jobs needed in this one sandbox (not baked into this file;
-# a real GitLab Runner has no such proxy in the way).
+# Verification note: all three jobs below -- including drift-matrix,
+# which does a real network clone of https://github.com/torvalds/
+# linux.git at 5 real tags -- were run for real with `gitlab-ci-local`
+# (Docker, no GitLab.com project needed). This sandbox's outbound
+# HTTPS proxy needed `--network host`, `--variable HTTPS_PROXY=...`
+# and `--ca-file` (gitlab-ci-local's own flag for mounting a custom
+# CA into the container) to let git trust that proxy's certificate --
+# all verification-time flags, none baked into this file, since a
+# real GitLab Runner has no such proxy in the way. Full output,
+# including the real drift found between v5.15 and v6.1, is in
+# docs/validation-notes.md.
 
 stages:
   - lint
@@ -26,10 +30,16 @@ lint:
 
 unit-tests:
   stage: test
-  image: python:3.12-slim
+  # python:3.12-slim has no git binary, and this sandbox's apt
+  # sources (deb.debian.org) are not reachable through its egress
+  # allowlist to apt-get one in -- found via a real failed CI run,
+  # documented in docs/validation-notes.md. warden.core shells out to
+  # a real `git`/`git apply` by design (that's the actual mechanism
+  # being tested), so the fix is a base image that already bundles
+  # git rather than fighting apt: cimg/python ships both.
+  image: cimg/python:3.12
   script:
     - pip install --quiet pytest pyyaml
-    # Unit tests only here -- no network dependency, fast, always on.
     - python3 -m pytest -v -m "not integration"
 
 # Real network: clones the real upstream kernel at real tags and
@@ -43,9 +53,8 @@ unit-tests:
 # second time was not repeated for every tag on every CI run.
 drift-matrix:
   stage: drift-check
-  image: python:3.12-slim
+  image: cimg/python:3.12
   when: manual
   script:
-    - apt-get update -qq && apt-get install -y -qq git --no-install-recommends
     - pip install --quiet pyyaml
     - python3 -m warden.cli matrix --tags v5.15,v6.1,v6.6,v6.12,v6.17

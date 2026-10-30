@@ -4,3 +4,4 @@ __pycache__/
 linux-sparse/
 research/
 *.egg-info/
+.gitlab-ci-local/
